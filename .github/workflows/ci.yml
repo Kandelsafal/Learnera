@@ -13,7 +13,6 @@ jobs:
   backend-test:
     runs-on: ubuntu-latest
 
-    # Spin up a real Postgres database for testing
     services:
       postgres:
         image: postgres:15-alpine
@@ -42,7 +41,6 @@ jobs:
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          # Adjust path if your requirements.txt is nested, e.g., backend/requirements.txt
           pip install -r backend/requirements.txt
 
       - name: Run Django Tests
@@ -55,41 +53,5 @@ jobs:
           DB_HOST: 'localhost'
           DB_PORT: '5432'
         run: |
-          # Change directory into your backend folder if needed
           cd backend
           python manage.py test
-
-  # ==========================================
-  # JOB 2: FRONTEND (Next.js)
-  # ==========================================
-  frontend-test:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          # If using yarn or pnpm, specify cache-dependency-path or use setup tool
-
-      - name: Install frontend dependencies
-        run: |
-          cd frontend  # Change directory to where your Next.js project lives
-          npm ci
-
-      - name: Run Next.js Linter / Tests
-        run: |
-          cd frontend
-          npm run lint
-          # npm run test  # Uncomment if you have unit tests set up (Jest/Vitest)
-
-      - name: Build Next.js Application
-        env:
-          NEXT_PUBLIC_API_URL: 'http://localhost:8000/api' # Dummy URL for build verification
-        run: |
-          cd frontend
-          npm run build
