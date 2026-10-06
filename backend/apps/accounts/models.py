@@ -36,7 +36,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     updated_at = models.DateTimeField(auto_now = True)
 
     #Connect User to Organization
-    organization = models.ManyToManyField(
+    organizations = models.ManyToManyField(
         "organization.Organization",
         through="organization.Membership",
         related_name="users",

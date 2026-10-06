@@ -35,7 +35,12 @@ class Membership(models.Model):
 
     #Data Container (Configuration of the Model)
     class Meta:
-        unique_together = ("user", "organization")
+        constraints = [
+            models.UniqueConstraint(
+                fields = ["user", "organization"],
+                name = "unique_user_organization"
+            )
+        ]
 
     def __str__(self):
         return f"{self.user} ->{self.organization} - {self.role} "
