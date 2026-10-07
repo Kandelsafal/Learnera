@@ -53,3 +53,33 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
          #Return String   
         return f"{self.first_name} {self.last_name} ({self.email})"
+
+
+
+class RefreshSession(models.Model):
+        user = models.ForeignKey(
+            User,
+            on_delete=models.CASCADE,
+            related_name="refresh_sessions"
+        )
+
+        token_jti = models.CharField(
+             max_length=255,
+             unique= True
+        )
+
+        created_at = models.DateTimeField(
+             auto_now_add=True
+        )
+
+        expires_at = models.DateTimeField()
+
+        revoked_at = models.DateTimeField(
+             null= True,
+             blank= True
+        )
+
+        last_used_at = models.DateTimeField(
+             null= True,
+             blank= True
+        )

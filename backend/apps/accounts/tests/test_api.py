@@ -2,6 +2,8 @@
 from django.test import TestCase
 from rest_framework import status
 from django.contrib.auth import get_user_model
+from apps.accounts.models import RefreshSession
+from rest_framework_simplejwt.tokens import RefreshToken
 User = get_user_model()
 
 class UserRegistrationAPITest(TestCase):
@@ -149,6 +151,41 @@ class UserLoginAPITest(TestCase):
                 status.HTTP_400_BAD_REQUEST
             )
 
+    def test_user_login_with_refreshSession(self):
+        login_data = {
+                        "email": "jane@example.com",
+                        "password": "securepassword123",
+                    }
+        
+        response = self.client.post(
+                        "/api/accounts/login/",
+                        login_data,
+                        format="json"
+                    )
+        
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK
+                    )
+
+        user_id = response.data["user"]["id"]
+
+        session = RefreshSession.objects.get(
+            user_id = user_id
+        )
+
+        # Get the refresh token from the cookie
+        refresh_token = response.cookies["refresh_token"].value
+
+        #Decode Token
+        token = RefreshToken(refresh_token)
+
+        # The JTI inside the JWT should match the database session
+        self.assertEqual(
+            session.token_jti,
+            str(token["jti"])
+        )
+
 class LogoutTestCase(TestCase):
     def test_user_can_logout(self):
 
@@ -259,6 +296,92 @@ class RefreshTokenTestCase(TestCase):
         )
 
 
+    def test_refresh_rotates_token(self):
+             
+             old_refresh_token = self.client.cookies["refresh_token"].value
+             old_token = RefreshToken(old_refresh_token)
+             old_jti = str(old_token["jti"])
+
+             response = self.client.post(
+                        "/api/accounts/refresh/",
+                        format="json"
+                    )
+    
+             cookie = response.cookies["refresh_token"].value
+             new_token = RefreshToken(cookie)
+             new_jti = str(new_token["jti"])
+             self.assertNotEqual(
+                 new_jti, old_jti
+             )
+             #Find Old Session
+             old_token = RefreshSession.objects.get(
+                  token_jti = old_jti
+             )
+             #Old Session Must be Revoked
+             self.assertIsNotNone(
+                  old_token.revoked_at
+             )
+
+    def test_new_refresh_token_works_after_rotation(self):
+        
+        # First refresh
+        first_refresh_response = self.client.post(
+            "/api/accounts/refresh/"
+        )
+
+        self.assertEqual(
+            first_refresh_response.status_code,
+            201
+        )
+
+        # Client now has the NEW refresh token
+        second_refresh_response = self.client.post(
+            "/api/accounts/refresh/"
+        )
+
+        self.assertEqual(
+            second_refresh_response.status_code,
+            201
+        )
+
+        self.assertIn(
+            "access_token",
+            second_refresh_response.data
+        )
+
+    def test_old_refresh_token_cannot_be_reused(self):
+        
+
+        old_refresh_token = self.client.cookies["refresh_token"].value
+
+        # First refresh
+        first_refresh_response = self.client.post(
+            "/api/accounts/refresh/"
+        )
+
+        self.assertEqual(
+            first_refresh_response.status_code,
+            201
+        )
+
+        # Put the OLD token back into the cookie
+        self.client.cookies["refresh_token"] = old_refresh_token
+
+        # Try to reuse old token
+        second_refresh_response = self.client.post(
+            "/api/accounts/refresh/"
+        )
+
+        self.assertEqual(
+            second_refresh_response.status_code,
+            401
+        )
+
+        self.assertEqual(
+            second_refresh_response.data["error"],
+            "Refresh session has been revoked"
+        )
+
     def test_refresh_without_cookie(self):
 
         # Delete the refresh cookie created during setUp
@@ -309,6 +432,8 @@ class RefreshTokenTestCase(TestCase):
             response.data["error"],
             "Invalid or expired refresh token"
         )
+
+    
 
 
 
