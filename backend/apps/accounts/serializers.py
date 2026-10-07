@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from .models import User
 from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password
+
 
 #Read Data from the Model
 class UserSerializer(serializers.ModelSerializer):
@@ -84,4 +86,30 @@ class UserLoginSerializer(serializers.Serializer):
             )
 
         attrs["user"] = user
+        return attrs
+
+class ChangePasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField(
+        write_only = True,
+        min_length = 8
+    )
+    new_password = serializers.CharField(
+            write_only = True,
+            min_length = 8
+        )
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+
+        current_password = attrs["current_password"]
+        new_password = attrs["new_password"]
+
+        if not user.check_password(current_password):
+            raise serializers.ValidationError(
+                 "Current password is incorrect."
+            )
+        validate_password(
+            new_password,
+            user = user
+        )
         return attrs

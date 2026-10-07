@@ -2,13 +2,14 @@ from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .serializers import UserRegistrationSerializer, UserSerializer, UserLoginSerializer
+from .serializers import UserRegistrationSerializer, UserSerializer, UserLoginSerializer, ChangePasswordSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from .models import RefreshSession
 from datetime import datetime
 from django.utils import timezone
 from django.db import transaction
+from rest_framework.permissions import IsAuthenticated
 # Create your views here.
 
 class UserRegistrationView(APIView):
@@ -42,7 +43,7 @@ class LoginView(APIView):
             user = serializer.validated_data["user"]
             #Generate Token
             token = RefreshToken.for_user(user)
-
+            
             expires_at = datetime.fromtimestamp(
                     token["exp"],
                     tz=timezone.get_current_timezone()
@@ -83,16 +84,135 @@ class LoginView(APIView):
 
 class LogoutView(APIView):
     def post(self, request):
-        response = Response(
-            {
-                "message": "Logout Successfully",
-                
-            }
-            ,status=status.HTTP_200_OK
-        
-        )
-        response.delete_cookie('refresh')
-        return response
+        cookieSession = request.COOKIES.get("refresh_token")
+        if not cookieSession:
+            return Response(
+                {"error": "Refresh token not found"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        try:
+            token = RefreshToken(cookieSession)
+            token_jti = str(token["jti"])
+            with transaction.atomic():
+                session = RefreshSession.objects.select_for_update().get(token_jti = token_jti)
+                session.revoked_at = timezone.now()
+                session.last_used_at = timezone.now()
+
+                session.save(
+                    update_fields=[
+                        "revoked_at",
+                        "last_used_at"
+                    ]
+                )
+
+            response = Response(
+                {
+                    "message": "Logout Successful"
+                },
+                status=status.HTTP_200_OK
+            )
+
+            # Remove refresh token from browser
+            response.delete_cookie(
+                "refresh_token"
+            )
+
+            return response
+
+        except RefreshSession.DoesNotExist:
+            return Response(
+                {"error": "Refresh session not found"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        except TokenError:
+            return Response(
+                {"error": "Invalid or expired refresh token"},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+class LogoutAllView(APIView):
+
+    def post(self, request):
+
+        # Get refresh token from cookie
+        refresh_token = request.COOKIES.get("refresh_token")
+
+        if not refresh_token:
+            return Response(
+                {
+                    "error": "Refresh token not found"
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        try:
+            # Decode and validate refresh token
+            decoded_token = RefreshToken(refresh_token)
+
+            # Get JTI
+            decoded_token_jti = str(
+                decoded_token["jti"]
+            )
+
+            with transaction.atomic():
+
+                # Find current refresh session
+                current_user_session = (
+                    RefreshSession.objects
+                    .select_for_update()
+                    .get(
+                        token_jti=decoded_token_jti,
+                        
+                    )
+                )
+                if current_user_session.revoked_at is not None:
+                    return Response(
+                        {"error": "Refresh session has been revoked"},
+                        status=status.HTTP_401_UNAUTHORIZED
+                    )
+
+                # Get user ID from the session
+                current_user = current_user_session.user
+
+                # Revoke all active sessions for this user
+                RefreshSession.objects.filter(
+                    user=current_user,
+                    revoked_at__isnull=True
+                ).select_for_update().update(
+                    revoked_at=timezone.now(),
+                    last_used_at=timezone.now()
+                )
+
+            response = Response(
+                {
+                    "message": "Logged out from all sessions"
+                },
+                status=status.HTTP_200_OK
+            )
+
+            # Remove current browser's refresh token
+            response.delete_cookie(
+                "refresh_token"
+            )
+
+            return response
+
+        except RefreshSession.DoesNotExist:
+            return Response(
+                {
+                    "error": "Refresh session not found"
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        except TokenError:
+            return Response(
+                {
+                    "error": "Invalid or expired refresh token"
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
 
 class RefreshTokenView(APIView):
     def post(self, request):
@@ -107,7 +227,7 @@ class RefreshTokenView(APIView):
 
         try:
             token = RefreshToken(refreshed_token)
-
+            
             #Check Session
             token_jti = str(token["jti"])
 
@@ -181,4 +301,74 @@ class RefreshTokenView(APIView):
                 }, 
                 status=status.HTTP_401_UNAUTHORIZED
                 )
+
+
+class MeView(APIView):
+    permission_classes= [IsAuthenticated]
+    def get(self, request):
+        serializer = UserSerializer(request.user)
+
+        return Response(
+               serializer.data 
+        ,status=status.HTTP_200_OK
+        )
+
+    def patch(self, request):
+        serializer = UserSerializer(request.user, data = request.data, partial = True)
+
+        if serializer.is_valid():
+            serializer.save()
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+
+        serializer = ChangePasswordSerializer(
+            data = request.data,
+            context = {"request":request}
+        )
+        if serializer.is_valid():
+            user = request.user
+
+            user.set_password(
+                serializer.validated_data["new_password"]
+            )
+            
+            with transaction.atomic():
+                RefreshSession.objects.filter(
+                    user = user,
+                    revoked_at__isnull = True,
+
+                ).select_for_update().update(
+                    revoked_at = timezone.now(),
+                    last_used_at = timezone.now()
+                )
+
+                user.save(
+                            update_fields = [
+                                "password"
+                                ]
+                            )
+
+            return Response(
+                {
+                    "message": "Password changed successfully."
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
 

@@ -27,6 +27,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
         max_length= 15
     )
+    
+    token_version = models.PositiveIntegerField(default=0)
 
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)

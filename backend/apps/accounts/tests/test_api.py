@@ -1,5 +1,6 @@
 
 from django.test import TestCase
+from rest_framework.test import APITestCase
 from rest_framework import status
 from django.contrib.auth import get_user_model
 from apps.accounts.models import RefreshSession
@@ -187,24 +188,66 @@ class UserLoginAPITest(TestCase):
         )
 
 class LogoutTestCase(TestCase):
-    def test_user_can_logout(self):
-
-        response = self.client.post(
-                '/api/accounts/logout/',
-                format = "json"
+    def setUp(self):
+        # 1. Create the user first so login actually works!
+        self.user = User.objects.create_user(
+            email="jane@example.com",
+            password="securepassword123"
         )
-        self.assertIn(
-            "message", response.data
-        )
-
-        self.assertEqual(
-            response.status_code, status.HTTP_200_OK
-        )
-
-        cookie = response.cookies.get('refresh_token')
         
+        # 2. Log in to establish the cookie
+        login_data = {
+            "email": "jane@example.com",
+            "password": "securepassword123",
+        }
+        
+        response = self.client.post(
+            "/api/accounts/login/",
+            login_data,
+            format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK) # Usually login returns 200 (adjust if yours returns 201)
+
+    def test_user_can_logout(self):
+        response = self.client.post(
+            '/api/accounts/logout/',
+            format="json"
+        )
+        self.assertIn("message", response.data)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Check that the cookie was cleared
+        cookie = response.cookies.get('refresh_token')
         if cookie:
-            self.assertTrue(cookie.value == '')
+            self.assertEqual(cookie.value, '')
+
+    def test_user_logout_session(self):
+        # Extract the cookie value string
+        cookie_morsel = self.client.cookies.get("refresh_token")
+        self.assertIsNotNone(cookie_morsel)
+        
+        decode_token = RefreshToken(cookie_morsel.value)
+        token_jti = decode_token["jti"]
+
+        # Fetch the session object from DB
+        current_session = RefreshSession.objects.get(
+            token_jti=token_jti
+        )
+
+        # Perform logout
+        response = self.client.post(
+            '/api/accounts/logout/',
+            format="json"
+        )
+        self.assertIn("message", response.data)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Refresh the instance from the database to see the updated timestamps
+        current_session.refresh_from_db()
+
+        self.assertIsNotNone(current_session.revoked_at)
+        self.assertIsNotNone(current_session.last_used_at)
 
 
 
@@ -433,6 +476,46 @@ class RefreshTokenTestCase(TestCase):
             "Invalid or expired refresh token"
         )
 
+class MeTestCase(APITestCase):
+    def setUp(self):
+        # 1. Create the user first so login actually works!
+                self.user = User.objects.create_user(
+                    email="jane@example.com",
+                    password="securepassword123"
+                )
+                
+                # 2. Log in to establish the cookie
+                login_data = {
+                    "email": "jane@example.com",
+                    "password": "securepassword123",
+                }
+                
+                self.login_response = self.client.post(
+                    "/api/accounts/login/",
+                    login_data,
+                    format="json"
+                )
+        
+                self.assertEqual(self.login_response.status_code, status.HTTP_200_OK)
+
+    def test_me_with_access_token(self):
+        access_token = self.login_response.data.get("access_token")
+        
+        # Attach the access token to the test client's header
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
+        
+        # Hit the protected /me/ endpoint
+        response = self.client.get("/api/accounts/me/", format="json")
+        
+        # Assertions
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data.get("email"), self.user.email)
+
+    def test_me_without_access_token(self):
+        response = self.client.get("/api/accounts/me/", format="json")
+                 
+                 # Assertions
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
     
 
 
