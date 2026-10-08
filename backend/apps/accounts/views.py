@@ -43,7 +43,7 @@ class LoginView(APIView):
             user = serializer.validated_data["user"]
             #Generate Token
             token = RefreshToken.for_user(user)
-            
+            token["token_version"] = user.token_version
             expires_at = datetime.fromtimestamp(
                     token["exp"],
                     tz=timezone.get_current_timezone()
@@ -235,6 +235,7 @@ class RefreshTokenView(APIView):
                 session = RefreshSession.objects.select_for_update().get(
                     token_jti = token_jti
                 )
+                
                 # 5. Check whether the session was revoked
                 if session.revoked_at is not None:
                     return Response(
@@ -249,6 +250,19 @@ class RefreshTokenView(APIView):
                         status=status.HTTP_401_UNAUTHORIZED
                     )
 
+                token_version = token.get("token_version")
+                if token_version is None:
+                    return Response(
+                        {"error": "Token version is missing"},
+                        status=status.HTTP_401_UNAUTHORIZED
+                    )
+                
+                if token_version != session.user.token_version:
+                    return Response(
+                    {"error": "Refresh token has been invalidated"},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+
                 session.last_used_at = timezone.now()
                 session.revoked_at = timezone.now()
                 session.save(
@@ -259,7 +273,7 @@ class RefreshTokenView(APIView):
                                 )
                 #New Token Generated
                 new_refresh_token = RefreshToken.for_user(session.user)
-               
+                new_refresh_token["token_version"] = session.user.token_version
 
                 expires_at = datetime.fromtimestamp(
                                     new_refresh_token["exp"],
@@ -340,11 +354,20 @@ class ChangePasswordView(APIView):
         if serializer.is_valid():
             user = request.user
 
-            user.set_password(
-                serializer.validated_data["new_password"]
-            )
+           
             
             with transaction.atomic():
+                user.set_password(
+                                serializer.validated_data["new_password"]
+                            )
+                user.token_version += 1
+                
+                user.save(
+                                            update_fields = [
+                                                "password",
+                                                "token_version"
+                                                ]
+                                            )
                 RefreshSession.objects.filter(
                     user = user,
                     revoked_at__isnull = True,
@@ -353,12 +376,7 @@ class ChangePasswordView(APIView):
                     revoked_at = timezone.now(),
                     last_used_at = timezone.now()
                 )
-
-                user.save(
-                            update_fields = [
-                                "password"
-                                ]
-                            )
+                
 
             return Response(
                 {

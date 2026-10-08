@@ -517,7 +517,216 @@ class MeTestCase(APITestCase):
                  # Assertions
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
     
+class ChangePasswordTestCase(APITestCase):
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="jane@example.com",
+            password="securepassword123"
+        )
+
+        login_data = {
+            "email": "jane@example.com",
+            "password": "securepassword123",
+        }
+
+        self.login_response = self.client.post(
+            "/api/accounts/login/",
+            login_data,
+            format="json"
+        )
+
+        self.assertEqual(
+            self.login_response.status_code,
+            status.HTTP_200_OK
+        )
+
+        self.access_token = self.login_response.data["access_token"]
+
+    def test_password_can_be_changed(self):
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {self.access_token}"
+        )
+
+        password_data = {
+            "current_password": "securepassword123",
+            "new_password": "newsecurepassword123",
+        }
+
+        response = self.client.post(
+            "/api/accounts/change-password/",
+            password_data,
+            format="json"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK
+        )
+
+        self.user.refresh_from_db()
+
+        self.assertTrue(
+            self.user.check_password(
+                "newsecurepassword123"
+            )
+        )
+
+        self.assertFalse(
+            self.user.check_password(
+                "securepassword123"
+            )
+        )
+    
+    def test_password_change_increments_token_version(self):
+
+        self.assertEqual(
+            self.user.token_version,
+            0
+        )
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {self.access_token}"
+        )
+
+        password_data = {
+            "current_password": "securepassword123",
+            "new_password": "newsecurepassword123",
+           
+        }
+
+        response = self.client.post(
+            "/api/accounts/change-password/",
+            password_data,
+            format="json"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK
+        )
+
+        self.user.refresh_from_db()
+
+        self.assertEqual(
+            self.user.token_version,
+            1
+        )
+
+    def test_old_access_token_is_invalid_after_password_change(self):
+
+        old_access_token = self.access_token
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {old_access_token}"
+        )
+
+        password_data = {
+            "current_password": "securepassword123",
+            "new_password": "newsecurepassword123",
+           
+        }
+
+        response = self.client.post(
+            "/api/accounts/change-password/",
+            password_data,
+            format="json"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK
+        )
+
+        # Try using the old access token
+        response = self.client.get(
+            "/api/accounts/me/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_401_UNAUTHORIZED
+        )
 
 
+    def test_password_change_revokes_refresh_session(self):
+
+        refresh_token = self.client.cookies["refresh_token"].value
+
+        token = RefreshToken(refresh_token)
+
+        session = RefreshSession.objects.get(
+            token_jti=str(token["jti"])
+        )
+
+        self.assertIsNone(
+            session.revoked_at
+        )
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {self.access_token}"
+        )
+
+        password_data = {
+            "current_password": "securepassword123",
+            "new_password": "newsecurepassword123",
+          
+        }
+
+        response = self.client.post(
+            "/api/accounts/change-password/",
+            password_data,
+            format="json"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK
+        )
+
+        session.refresh_from_db()
+
+        self.assertIsNotNone(
+            session.revoked_at
+        )
+
+    def test_old_refresh_token_is_invalid_after_password_change(self):
+
+        old_refresh_token = self.client.cookies["refresh_token"].value
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {self.access_token}"
+        )
+
+        password_data = {
+            "current_password": "securepassword123",
+            "new_password": "newsecurepassword123",
+            
+        }
+
+        response = self.client.post(
+            "/api/accounts/change-password/",
+            password_data,
+            format="json"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK
+        )
+
+        # Put the old refresh token back into the cookie
+        self.client.cookies["refresh_token"] = old_refresh_token
+
+        response = self.client.post(
+            "/api/accounts/refresh/",
+            format="json"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_401_UNAUTHORIZED
+        )
 
         
