@@ -835,6 +835,8 @@ class ChangePasswordTestCase(APITestCase):
             status.HTTP_400_BAD_REQUEST
         )
 
+
+
         
 
         

@@ -59,6 +59,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class RefreshSession(models.Model):
+        
         user = models.ForeignKey(
             User,
             on_delete=models.CASCADE,
@@ -68,6 +69,22 @@ class RefreshSession(models.Model):
         token_jti = models.CharField(
              max_length=255,
              unique= True
+        )
+        
+        ip_address = models.GenericIPAddressField(
+            null=True,
+            blank=True
+        )
+
+        user_agent = models.TextField(
+            null=True,
+            blank=True
+        )
+
+        device_name = models.CharField(
+            max_length=255,
+            null=True,
+            blank=True
         )
 
         created_at = models.DateTimeField(
@@ -92,6 +109,29 @@ class EmailVerificationToken(models.Model):
         User,
         on_delete=models.CASCADE,
         related_name="email_verification_tokens"
+    )
+
+    token_hash = models.CharField(
+        max_length=64,
+        unique=True
+    )
+
+    expires_at = models.DateTimeField()
+
+    used_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+class PasswordResetToken(models.Model):
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="password_verification_tokens"
     )
 
     token_hash = models.CharField(
