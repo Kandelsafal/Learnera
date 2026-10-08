@@ -2,7 +2,7 @@ from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .serializers import UserRegistrationSerializer, UserSerializer, UserLoginSerializer, ChangePasswordSerializer
+from .serializers import UserRegistrationSerializer, UserSerializer, UserLoginSerializer, ChangePasswordSerializer, EmailVerificationSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from .models import RefreshSession
@@ -10,6 +10,10 @@ from datetime import datetime
 from django.utils import timezone
 from django.db import transaction
 from rest_framework.permissions import IsAuthenticated
+from .models import EmailVerificationToken
+from .utils import generate_email_verification_token
+from datetime import timedelta
+import hashlib
 # Create your views here.
 
 class UserRegistrationView(APIView):
@@ -19,6 +23,16 @@ class UserRegistrationView(APIView):
 
         if serializer.is_valid():
             user = serializer.save()
+
+            raw_token, token_hash = generate_email_verification_token()
+
+            EmailVerificationToken.objects.create(
+                user = user,
+                token_hash = token_hash,
+                expires_at = timezone.now() + timedelta(
+                    minutes = 15
+                )
+            )
 
             return Response(
                 {   
@@ -32,6 +46,83 @@ class UserRegistrationView(APIView):
             serializer.errors,
             status=status.HTTP_400_BAD_REQUEST
         )
+
+class VerifyEmailView(APIView):
+
+    def post(self, request):
+
+        serializer = EmailVerificationSerializer(
+            data=request.data
+        )
+
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        raw_token = serializer.validated_data["token"]
+
+        token_hash = hashlib.sha256(
+            raw_token.encode()
+        ).hexdigest()
+
+        try:
+
+            with transaction.atomic():
+
+                verification_token = (
+                    EmailVerificationToken.objects
+                    .select_for_update()
+                    .select_related("user")
+                    .get(token_hash=token_hash)
+                )
+
+                if verification_token.used_at is not None:
+                    return Response(
+                        {
+                            "error": "Verification token has already been used."
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                if verification_token.expires_at <= timezone.now():
+                    return Response(
+                        {
+                            "error": "Verification token has expired."
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                user = verification_token.user
+
+                user.is_email_verified = True
+                user.save(
+                    update_fields=["is_email_verified"]
+                )
+
+                verification_token.used_at = timezone.now()
+                verification_token.save(
+                    update_fields=["used_at"]
+                )
+
+                return Response(
+                    {
+                        "message": "Email verified successfully."
+                    },
+                    status=status.HTTP_200_OK
+                )
+
+        except EmailVerificationToken.DoesNotExist:
+
+            return Response(
+                {
+                    "error": "Invalid verification token."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        
 class LoginView(APIView):
     def post(self, request):
         serializer = UserLoginSerializer(

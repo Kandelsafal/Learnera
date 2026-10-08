@@ -22,6 +22,7 @@ class UserSerializer(serializers.ModelSerializer):
 
         read_only_fields = [
             "id",
+            "email",
             "is_email_verified",
             "created_at",
             "updated_at",
@@ -113,3 +114,10 @@ class ChangePasswordSerializer(serializers.Serializer):
             user = user
         )
         return attrs
+
+
+class EmailVerificationSerializer(serializers.Serializer):
+
+    token = serializers.CharField(
+        write_only=True
+    )

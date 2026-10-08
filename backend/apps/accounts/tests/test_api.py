@@ -249,8 +249,6 @@ class LogoutTestCase(TestCase):
         self.assertIsNotNone(current_session.revoked_at)
         self.assertIsNotNone(current_session.last_used_at)
 
-
-
 class RefreshTokenTestCase(TestCase):
 
     def setUp(self):
@@ -516,6 +514,92 @@ class MeTestCase(APITestCase):
                  
                  # Assertions
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_user_can_update_profile(self):
+        access_token = self.login_response.data.get("access_token")
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {access_token}"
+        )
+
+        profile_data = {
+            "first_name": "John",
+            "last_name": "Doe",
+            "phn_number": "9812345678",
+        }
+
+        response = self.client.patch(
+            "/api/accounts/me/",
+            profile_data,
+            format="json"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK
+        )
+
+        self.assertEqual(
+            response.data["first_name"],
+            "John"
+        )
+
+        self.assertEqual(
+            response.data["last_name"],
+            "Doe"
+        )
+
+        self.assertEqual(
+            response.data["phn_number"],
+            "9812345678"
+        )
+
+        self.user.refresh_from_db()
+
+        self.assertEqual(
+            self.user.first_name,
+            "John"
+        )
+
+        self.assertEqual(
+            self.user.last_name,
+            "Doe"
+        )
+
+        self.assertEqual(
+            self.user.phn_number,
+            "9812345678"
+        )
+
+    def test_user_cannot_change_email_verification_status(self):
+        access_token = self.login_response.data.get("access_token")
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {access_token}"
+        )
+
+        self.assertTrue(
+            self.user.is_email_verified
+        )
+
+        profile_data = {
+            "is_email_verified": True,
+        }
+
+        response = self.client.patch(
+            "/api/accounts/me/",
+            profile_data,
+            format="json"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK
+        )
+
+        self.user.refresh_from_db()
+
+        self.assertFalse(
+            self.user.is_email_verified
+        )
     
 class ChangePasswordTestCase(APITestCase):
 
@@ -728,5 +812,29 @@ class ChangePasswordTestCase(APITestCase):
             response.status_code,
             status.HTTP_401_UNAUTHORIZED
         )
+
+    def test_password_change_fails_with_wrong_current_password(self):
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {self.access_token}"
+        )
+
+        password_data = {
+            "current_password": "wrongpassword123",
+            "new_password": "newsecurepassword123",
+        }
+
+        response = self.client.post(
+            "/api/accounts/change-password/",
+            password_data,
+            format="json"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST
+        )
+
+        
 
         
