@@ -1,3 +1,3 @@
 from django.test import TestCase
-
-# Create your tests here.
+from apps.accounts.models import User
+from apps.accounts.serializers import UserSerializer, UserRegistrationSerializer
